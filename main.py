@@ -280,7 +280,6 @@ class GridWindow(QMainWindow):
         )
 
     def _on_dot_toggle(self, cx, cy, active):
-        state = "ON " if active else "OFF"
         if active:
             gx = cx // CELL_SIZE
             gy = cy // CELL_SIZE
