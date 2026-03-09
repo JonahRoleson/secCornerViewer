@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QTextEdit,
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPen, QColor, QBrush, QPainter
+from PySide6.QtGui import QPen, QColor, QBrush, QPainter, QIcon
 import json
 
 with open("config.json") as f:
@@ -94,8 +94,6 @@ class IntersectionDot(QGraphicsEllipseItem):
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self._active = not self._active
-            print(self.pos().x()/CELL_SIZE)
-            print(self.pos().y()/CELL_SIZE)
             if self._on_toggle:
                 self._on_toggle(self._cx, self._cy, self._active)
             self._apply_style()
@@ -240,7 +238,8 @@ class GridView(QGraphicsView):
 class GridWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Grid of Grids")
+        self.setWindowTitle("AtlasAstro Innovations | Section Corner Reference")
+        self.setWindowIcon(QIcon("AtlasIcon.ico"))
         self._scene = build_scene(on_dot_toggle=self._on_dot_toggle)
         self._view = GridView(self._scene)
         self.resize(
@@ -304,7 +303,7 @@ class GridWindow(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    app.setApplicationName("Grid of Grids")
+    app.setApplicationName("AtlasAstro Innovations | Section Corner Reference")
     win = GridWindow()
     win.show()
     sys.exit(app.exec())
