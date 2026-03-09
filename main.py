@@ -13,6 +13,7 @@ Usage:         python grid_of_grids.py
 """
 
 import sys
+import re
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QGraphicsView,
     QGraphicsScene, QGraphicsEllipseItem, QGraphicsRectItem, QSizePolicy,
@@ -54,6 +55,19 @@ BACKGROUND_COLOR = QColor("#cfcfcf")
 HOVER_RECT_COLOR = QColor("#00c8fa")
 
 PADDING = 50
+DIRECTION_OPPOSITE = {
+    "NW": "SE",
+    "NE": "SW",
+    "SE": "NW",
+    "SW": "NE",
+}
+DIRECTION_OFFSET = {
+    "NW": (0, 0),
+    "NE": (1, 0),
+    "SW": (0, 1),
+    "SE": (1, 1),
+}
+
 
 # ── Derived geometry ──────────────────────────────────────────────────────────
 
@@ -335,18 +349,112 @@ class GridWindow(QMainWindow):
                     self._list.takeItem(i)
         self._clear_hover_rect()
 
+    # Direction → (col_offset, row_offset) as a fraction multiplier
+
+    def _parse_directions(self, text: str) -> list[str]:
+        """Extract all direction tokens (NW/NE/SE/SW) from a paragraph string."""
+        return re.findall(r'\b(NW|NE|SE|SW)\b', text)
+
+    def _inner_cell_rect(self, cx: int, cy: int, directions: list[str]):
+        """
+        directions[0]  = the corner label (NW/NE/SE/SW) — tells us which corner of
+                        the final cell the dot sits on.
+        directions[1:] = quarter chain from smallest→largest, so reverse it to walk
+                        top-down from the even-inner cell.
+
+        Depth 0 quarters (just "X Corner of Section") → full even-inner cell (CELL_W×CELL_H)
+        Depth 1 ("X Corner of X Quarter of Section")  → half cell
+        Depth 2                                        → quarter cell
+        etc.
+        """
+        if not directions:
+            return cx, cy, CELL_W, CELL_H
+
+        corner    = directions[0]
+        quarters  = list(reversed(directions[1:]))  # largest→smallest, walk inward
+        depth     = len(quarters)
+
+        # Cell size shrinks by half per depth level
+        w = TOTAL_W
+        h = TOTAL_H
+        for _ in range(depth):
+            w //= 2
+            h //= 2
+
+        # The dot is at the 'corner' of the final cell — work out the rect origin
+        # NW corner → dot is top-left    → rect extends SE → origin = dot pos
+        # NE corner → dot is top-right   → rect extends SW → origin = (cx - w, cy)
+        # SW corner → dot is bottom-left → rect extends NE → origin = (cx, cy - h)
+        # SE corner → dot is bottom-right→ rect extends NW → origin = (cx - w, cy - h)
+        corner_origin = {
+            "NW": (cx,     cy    ),
+            "NE": (cx - w, cy    ),
+            "SW": (cx,     cy - h),
+            "SE": (cx - w, cy - h),
+        }
+        rx, ry = corner_origin[corner]
+        return rx, ry, w, h
+    """ def _parse_directions(self, text: str) -> list[str]:
+        Extract all direction tokens (NW/NE/SE/SW) from a paragraph string.
+        return re.findall(r'\b(NW|NE|SE|SW)\b', text)
     # ── Hover → draw inner-cell rectangle ────────────────────────────────────
-# HELLO WORLD
-    def _inner_cell_rect(self, cx: int, cy: int):
-        """Return (x, y, w, h) of the inner cell that contains pixel (cx, cy)."""
+    def _inner_cell_rect(self, cx: int, cy: int, directions: list[str]):
+        Walk the direction chain to find the correct sub-cell.
+        Each direction halves the cell size and picks a quadrant.
+        The final rectangle is placed at the OPPOSITE corner of the first direction.
+        if not directions:
+            return cx, cy, CELL_W, CELL_H
+
+        # Start from the even-inner cell that owns this dot (NW corner = dot pos)
+        x, y = cx, cy
+        w, h = CELL_W, CELL_H
+
+        # Shrink and offset for each direction in the chain
+        for d in directions:
+            w //= 2
+            h //= 2
+            col, row = DIRECTION_OFFSET[d]
+            x += col * w
+            y += row * h
+
+        # Now flip to the opposite of the FIRST direction
+        opposite = DIRECTION_OPPOSITE[directions[0]]
+        col, row = DIRECTION_OFFSET[opposite]
+        # Re-anchor: shift so the rect sits at the opposite corner
+        x = cx + col * (CELL_W - w)
+        y = cy + row * (CELL_H - h)
+
+        return x, y, w, h   
+ """    """ def _inner_cell_rect(self, cx: int, cy: int):
+        Return (x, y, w, h) of the inner cell that contains pixel (cx, cy).
         # Which inner cell column/row does this dot sit in?
         inner_col = cx // CELL_W
         inner_row = cy // CELL_H
         rx = inner_col * CELL_W
         ry = inner_row * CELL_H
         return rx, ry, CELL_W, CELL_H
-
+"""    
     def _on_item_hover(self, item: QListWidgetItem):
+        self._clear_hover_rect()
+        coords = item.data(Qt.ItemDataRole.UserRole)
+        if coords is None:
+            return
+        cx, cy = coords
+        text = item.text()
+        directions = self._parse_directions(text)
+        rx, ry, rw, rh = self._inner_cell_rect(cx, cy, directions)
+
+        rect_pen = QPen(HOVER_RECT_COLOR, 2.5, Qt.PenStyle.SolidLine)
+        fill = QColor(HOVER_RECT_COLOR)
+        fill.setAlpha(35)
+
+        rect_item = QGraphicsRectItem(rx, ry, rw, rh)
+        rect_item.setPen(rect_pen)
+        rect_item.setBrush(QBrush(fill))
+        rect_item.setZValue(5)
+        self._scene.addItem(rect_item)
+        self._hover_rect = rect_item
+    """ def _on_item_hover(self, item: QListWidgetItem):
         self._clear_hover_rect()
         coords = item.data(Qt.ItemDataRole.UserRole)
         if coords is None:
@@ -364,7 +472,7 @@ class GridWindow(QMainWindow):
         rect_item.setZValue(5)
         self._scene.addItem(rect_item)
         self._hover_rect = rect_item
-
+ """
     def _clear_hover_rect(self):
         if self._hover_rect is not None:
             self._scene.removeItem(self._hover_rect)
