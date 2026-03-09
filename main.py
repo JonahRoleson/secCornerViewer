@@ -16,10 +16,19 @@ import sys
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QGraphicsView,
     QGraphicsScene, QGraphicsEllipseItem, QSizePolicy,
+    QWidget, QHBoxLayout, QTextEdit,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPen, QColor, QBrush, QPainter
+import json
 
+with open("config.json") as f:
+    raw = json.load(f)
+
+CONTENT = {
+    tuple(int(v) for v in key.split(",")): paragraphs
+    for key, paragraphs in raw.items()
+}
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 OUTER_COLS = 2
@@ -62,13 +71,16 @@ TOTAL_H = OUTER_ROWS * INNER_H
 # ── Clickable intersection dot ────────────────────────────────────────────────
 
 class IntersectionDot(QGraphicsEllipseItem):
-    def __init__(self, cx, cy, radius=DOT_RADIUS):
+    def __init__(self, cx, cy, radius=DOT_RADIUS, on_toggle=None):
         r = radius
         super().__init__(-r, -r, 2 * r, 2 * r)
         self.setPos(cx, cy)
         self.setAcceptHoverEvents(True)
         self.setZValue(10)
         self._active = False
+        self._cx = cx
+        self._cy = cy
+        self._on_toggle = on_toggle
         self._apply_style()
 
     def _apply_style(self):
@@ -84,6 +96,8 @@ class IntersectionDot(QGraphicsEllipseItem):
             self._active = not self._active
             print(self.pos().x()/CELL_SIZE)
             print(self.pos().y()/CELL_SIZE)
+            if self._on_toggle:
+                self._on_toggle(self._cx, self._cy, self._active)
             self._apply_style()
             event.accept()
         else:
@@ -102,7 +116,7 @@ class IntersectionDot(QGraphicsEllipseItem):
 
 # ── Scene builder ─────────────────────────────────────────────────────────────
 
-def build_scene() -> QGraphicsScene:
+def build_scene(on_dot_toggle=None) -> QGraphicsScene:
     scene = QGraphicsScene()
     scene.setBackgroundBrush(QBrush(BACKGROUND_COLOR))
 
@@ -159,7 +173,7 @@ def build_scene() -> QGraphicsScene:
         key = (cx, cy)
         if key not in seen:
             seen.add(key)
-            scene.addItem(IntersectionDot(cx, cy))
+            scene.addItem(IntersectionDot(cx, cy, on_toggle=on_dot_toggle))
 
     # even-inner intersections (every CELL_SIZE step)
     for ogy in range(OUTER_ROWS):
@@ -227,13 +241,57 @@ class GridWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Grid of Grids")
-        self._scene = build_scene()
+        self._scene = build_scene(on_dot_toggle=self._on_dot_toggle)
         self._view = GridView(self._scene)
-        self.setCentralWidget(self._view)
         self.resize(
             min(TOTAL_W + 2 * PADDING + 40, 1200),
             min(TOTAL_H + 2 * PADDING + 80, 900),
         )
+        # --- Text Panel -------------------------------------------------------
+        self._text = QTextEdit()
+        self._text.setReadOnly(True)
+        self._text.setFixedWidth(220)
+        self._text.setStyleSheet("""
+            QTextEdit {
+                background: #cfcfcf;
+                color: #1e1e1e;
+                font-family: monospace;
+                font-size: 12px;
+                border-left-width: 1px;
+                border-left-color: darkgray;
+                border-left-style: solid;
+                padding: 8px;                     
+            }                         
+        """)
+        self._text.setPlainText("No intersection selected.")
+
+        # --- Layout -----------------------------------------------------------
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self._view)
+        layout.addWidget(self._text)
+        self.setCentralWidget(container)
+
+        self.resize(
+            min(TOTAL_W + 2 * PADDING + 40 + 220, 1400),
+            min(TOTAL_H + 2 * PADDING + 80, 900),
+        )
+
+    def _on_dot_toggle(self, cx, cy, active):
+        state = "ON " if active else "OFF"
+        if active:
+            gx = cx // CELL_SIZE
+            gy = cy // CELL_SIZE
+            for paragraph in CONTENT[gx, gy]:
+                self._text.append(f"{paragraph}\n")
+        else:
+            self._text.clear()
+
+    def log(self, message: str):
+        """Append a line to the text panel"""
+        self._text.append(message)
 
     def showEvent(self, event):
         super().showEvent(event)
