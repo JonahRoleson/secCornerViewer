@@ -15,10 +15,10 @@ Usage:         python grid_of_grids.py
 import sys
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QGraphicsView,
-    QGraphicsScene, QGraphicsEllipseItem, QSizePolicy,
-    QWidget, QHBoxLayout, QTextEdit,
+    QGraphicsScene, QGraphicsEllipseItem, QGraphicsRectItem, QSizePolicy,
+    QWidget, QHBoxLayout, QListWidget, QListWidgetItem,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal, QPoint
 from PySide6.QtGui import QPen, QColor, QBrush, QPainter, QIcon
 import json
 
@@ -29,41 +29,40 @@ CONTENT = {
     tuple(int(v) for v in key.split(",")): paragraphs
     for key, paragraphs in raw.items()
 }
+
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 OUTER_COLS = 2
 OUTER_ROWS = 2
 
-INNER_COLS = 4          # sub-grid divisions per outer cell
+INNER_COLS = 4
 INNER_ROWS = 4
 
-EVEN_INNER_COLS = 2     # smallest cell divisions per inner cell
+EVEN_INNER_COLS = 2
 EVEN_INNER_ROWS = 2
 
-CELL_SIZE = 36          # pixels between adjacent even-inner intersections
+CELL_SIZE = 36
 
-OUTER_LINE_WIDTH    = 3.0
-INNER_LINE_WIDTH    = 1.5
+OUTER_LINE_WIDTH      = 3.0
+INNER_LINE_WIDTH      = 1.5
 EVEN_INNER_LINE_WIDTH = 0.6
 
 LINE_COLOR       = QColor("#2c2c2c")
 DOT_COLOR        = QColor("#00c8fa")
 DOT_RADIUS       = 8
 BACKGROUND_COLOR = QColor("#cfcfcf")
+HOVER_RECT_COLOR = QColor("#00c8fa")
 
 PADDING = 50
 
 # ── Derived geometry ──────────────────────────────────────────────────────────
 
-# size of the smallest cell (even-inner)
 CELL_W = EVEN_INNER_COLS * CELL_SIZE
 CELL_H = EVEN_INNER_ROWS * CELL_SIZE
 
-# size of one inner sub-grid block
 INNER_W = INNER_COLS * CELL_W
 INNER_H = INNER_ROWS * CELL_H
 
-# total canvas size
 TOTAL_W = OUTER_COLS * INNER_W
 TOTAL_H = OUTER_ROWS * INNER_H
 
@@ -112,6 +111,37 @@ class IntersectionDot(QGraphicsEllipseItem):
         super().hoverLeaveEvent(event)
 
 
+# ── Hoverable List Widget ─────────────────────────────────────────────────────
+
+class HoverListWidget(QListWidget):
+    """A QListWidget that emits item_hovered(item) as the mouse moves over rows,
+    and item_unhovered() when the mouse leaves the widget entirely."""
+
+    item_hovered   = Signal(QListWidgetItem)
+    item_unhovered = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMouseTracking(True)
+        self._last_hovered = None
+
+    def mouseMoveEvent(self, event):
+        item = self.itemAt(event.position().toPoint())
+        if item and item is not self._last_hovered:
+            self._last_hovered = item
+            self.item_hovered.emit(item)
+        elif not item and self._last_hovered is not None:
+            self._last_hovered = None
+            self.item_unhovered.emit()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        if self._last_hovered is not None:
+            self._last_hovered = None
+            self.item_unhovered.emit()
+        super().leaveEvent(event)
+
+
 # ── Scene builder ─────────────────────────────────────────────────────────────
 
 def build_scene(on_dot_toggle=None) -> QGraphicsScene:
@@ -126,25 +156,21 @@ def build_scene(on_dot_toggle=None) -> QGraphicsScene:
     inner_pen      = pen(INNER_LINE_WIDTH)
     even_inner_pen = pen(EVEN_INNER_LINE_WIDTH)
 
-    # ── Level 3: even-inner lines (thinnest) ─────────────────────────────────
-    # Iterate every inner cell and draw EVEN_INNER subdivisions inside it
+    # Level 3: even-inner lines
     for ogy in range(OUTER_ROWS):
         for ogx in range(OUTER_COLS):
             for iy in range(INNER_ROWS):
                 for ix in range(INNER_COLS):
-                    # origin of this inner cell
                     ox = ogx * INNER_W + ix * CELL_W
                     oy = ogy * INNER_H + iy * CELL_H
-                    # vertical lines
                     for ex in range(EVEN_INNER_COLS + 1):
                         x = ox + ex * CELL_SIZE
                         scene.addLine(x, oy, x, oy + CELL_H, even_inner_pen).setZValue(1)
-                    # horizontal lines
                     for ey in range(EVEN_INNER_ROWS + 1):
                         y = oy + ey * CELL_SIZE
                         scene.addLine(ox, y, ox + CELL_W, y, even_inner_pen).setZValue(1)
 
-    # ── Level 2: inner lines (medium) ────────────────────────────────────────
+    # Level 2: inner lines
     for ogy in range(OUTER_ROWS):
         for ogx in range(OUTER_COLS):
             ox = ogx * INNER_W
@@ -156,7 +182,7 @@ def build_scene(on_dot_toggle=None) -> QGraphicsScene:
                 y = oy + iy * CELL_H
                 scene.addLine(ox, y, ox + INNER_W, y, inner_pen).setZValue(2)
 
-    # ── Level 1: outer lines (thickest, on top) ───────────────────────────────
+    # Level 1: outer lines
     for ogx in range(OUTER_COLS + 1):
         x = ogx * INNER_W
         scene.addLine(x, 0, x, TOTAL_H, outer_pen).setZValue(3)
@@ -164,7 +190,7 @@ def build_scene(on_dot_toggle=None) -> QGraphicsScene:
         y = ogy * INNER_H
         scene.addLine(0, y, TOTAL_W, y, outer_pen).setZValue(3)
 
-    # ── Clickable dots at every intersection ──────────────────────────────────
+    # Clickable dots
     seen: set = set()
 
     def add_dot(cx, cy):
@@ -173,7 +199,6 @@ def build_scene(on_dot_toggle=None) -> QGraphicsScene:
             seen.add(key)
             scene.addItem(IntersectionDot(cx, cy, on_toggle=on_dot_toggle))
 
-    # even-inner intersections (every CELL_SIZE step)
     for ogy in range(OUTER_ROWS):
         for ogx in range(OUTER_COLS):
             for iy in range(INNER_ROWS):
@@ -240,29 +265,41 @@ class GridWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("AtlasAstro Innovations | Section Corner Reference")
         self.setWindowIcon(QIcon("AtlasIcon.ico"))
+        self._hover_rect: QGraphicsRectItem | None = None
+
         self._scene = build_scene(on_dot_toggle=self._on_dot_toggle)
-        self._view = GridView(self._scene)
-        self.resize(
-            min(TOTAL_W + 2 * PADDING + 40, 1200),
-            min(TOTAL_H + 2 * PADDING + 80, 900),
-        )
-        # --- Text Panel -------------------------------------------------------
-        self._text = QTextEdit()
-        self._text.setReadOnly(True)
-        self._text.setFixedWidth(220)
-        self._text.setStyleSheet("""
-            QTextEdit {
+        self._view  = GridView(self._scene)
+
+        # --- List panel -------------------------------------------------------
+        self._list = HoverListWidget()
+        self._list.setFixedWidth(220)
+        self._list.setStyleSheet("""
+            QListWidget {
                 background: #cfcfcf;
                 color: #1e1e1e;
                 font-family: monospace;
                 font-size: 12px;
-                border-left-width: 1px;
-                border-left-color: darkgray;
-                border-left-style: solid;
-                padding: 8px;                     
-            }                         
+                border-left: 1px solid darkgray;
+                padding: 4px;
+                outline: 0;
+            }
+            QListWidget::item {
+                padding: 6px 4px;
+                border-bottom: 1px solid #b0b0b0;
+            }
+            QListWidget::item:hover {
+                background: #b8eaf7;
+            }
+            QListWidget::item:selected {
+                background: #80d8f0;
+                color: #1e1e1e;
+            }
         """)
-        self._text.setPlainText("No intersection selected.")
+        self._list.setWordWrap(True)
+        self._list.setTextElideMode(Qt.TextElideMode.ElideNone)
+
+        self._list.item_hovered.connect(self._on_item_hover)
+        self._list.item_unhovered.connect(self._clear_hover_rect)
 
         # --- Layout -----------------------------------------------------------
         container = QWidget()
@@ -270,7 +307,7 @@ class GridWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(self._view)
-        layout.addWidget(self._text)
+        layout.addWidget(self._list)
         self.setCentralWidget(container)
 
         self.resize(
@@ -278,18 +315,62 @@ class GridWindow(QMainWindow):
             min(TOTAL_H + 2 * PADDING + 80, 900),
         )
 
+    # ── Dot toggle → populate list ────────────────────────────────────────────
+
     def _on_dot_toggle(self, cx, cy, active):
         if active:
             gx = cx // CELL_SIZE
             gy = cy // CELL_SIZE
-            for paragraph in CONTENT[gx, gy]:
-                self._text.append(f"{paragraph}\n")
+            paragraphs = CONTENT.get((gx, gy), [])
+            for paragraph in paragraphs:
+                item = QListWidgetItem(paragraph)
+                # Store the dot coords so we can look up the inner cell later
+                item.setData(Qt.ItemDataRole.UserRole, (cx, cy))
+                self._list.addItem(item)
         else:
-            self._text.clear()
+            # Remove all items that belong to this dot
+            for i in range(self._list.count() - 1, -1, -1):
+                item = self._list.item(i)
+                if item.data(Qt.ItemDataRole.UserRole) == (cx, cy):
+                    self._list.takeItem(i)
+        self._clear_hover_rect()
 
-    def log(self, message: str):
-        """Append a line to the text panel"""
-        self._text.append(message)
+    # ── Hover → draw inner-cell rectangle ────────────────────────────────────
+# HELLO WORLD
+    def _inner_cell_rect(self, cx: int, cy: int):
+        """Return (x, y, w, h) of the inner cell that contains pixel (cx, cy)."""
+        # Which inner cell column/row does this dot sit in?
+        inner_col = cx // CELL_W
+        inner_row = cy // CELL_H
+        rx = inner_col * CELL_W
+        ry = inner_row * CELL_H
+        return rx, ry, CELL_W, CELL_H
+
+    def _on_item_hover(self, item: QListWidgetItem):
+        self._clear_hover_rect()
+        coords = item.data(Qt.ItemDataRole.UserRole)
+        if coords is None:
+            return
+        cx, cy = coords
+        rx, ry, rw, rh = self._inner_cell_rect(cx, cy)
+
+        rect_pen = QPen(HOVER_RECT_COLOR, 2.5, Qt.PenStyle.SolidLine)
+        fill = QColor(HOVER_RECT_COLOR)
+        fill.setAlpha(35)
+
+        rect_item = QGraphicsRectItem(rx, ry, rw, rh)
+        rect_item.setPen(rect_pen)
+        rect_item.setBrush(QBrush(fill))
+        rect_item.setZValue(5)
+        self._scene.addItem(rect_item)
+        self._hover_rect = rect_item
+
+    def _clear_hover_rect(self):
+        if self._hover_rect is not None:
+            self._scene.removeItem(self._hover_rect)
+            self._hover_rect = None
+
+    # ── Fit on show ──────────────────────────────────────────────────────────
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -303,7 +384,7 @@ class GridWindow(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    app.setApplicationName("AtlasAstro Innovations | Section Corner Reference")
+    app.setApplicationName("Grid of Grids")
     win = GridWindow()
     win.show()
     sys.exit(app.exec())
